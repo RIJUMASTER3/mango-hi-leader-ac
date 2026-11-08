@@ -1,0 +1,39 @@
+name: Retain recent release files
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep latest 3 APKs and 2 connector archives
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            const assets = releases
+              .filter(release => !release.draft)
+              .flatMap(release => (release.assets || []).map(asset => ({ release, asset })))
+              .sort((a, b) => new Date(b.asset.created_at) - new Date(a.asset.created_at));
+            const limits = [
+              { matches: name => name.toLowerCase().endsWith('.apk'), keep: 3 },
+              { matches: name => name.toLowerCase().endsWith('.zip'), keep: 2 }
+            ];
+            for (const rule of limits) {
+              const matching = assets.filter(item => rule.matches(item.asset.name));
+              for (const item of matching.slice(rule.keep)) {
+                core.info(`Deleting old release asset: ${item.asset.name}`);
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: item.asset.id
+                });
+              }
+            }
